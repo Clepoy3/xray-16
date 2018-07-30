@@ -26,6 +26,7 @@
 #include "IGame_Persistent.h"
 #include "xrScriptEngine/ScriptExporter.hpp"
 #include "xr_input.h"
+#include "splash.h"
 
 ENGINE_API CRenderDevice Device;
 ENGINE_API CLoadScreenRenderer load_screen_renderer;
@@ -112,6 +113,40 @@ void CRenderDevice::End(void)
         m_editor->on_load_finished();
 }
 
+// XXX: make it work correct in all situations
+void CRenderDevice::RenderThreadProc(void* context)
+{
+    auto& device = *static_cast<CRenderDevice*>(context);
+    while (true)
+    {
+        device.renderProcessFrame.Wait();
+        if (device.mt_bMustExit)
+        {
+            device.renderThreadExit.Set();
+            return;
+        }
+
+        if (!GEnv.isDedicatedServer)
+        {
+            // all rendering is done here
+            CStatTimer renderTotalReal;
+            renderTotalReal.FrameStart();
+            renderTotalReal.Begin();
+            if (device.b_is_Active && device.Begin())
+            {
+                device.seqRender.Process();
+                device.CalcFrameStats();
+                device.Statistic->Show();
+                device.End(); // Present goes here
+            }
+            renderTotalReal.End();
+            renderTotalReal.FrameEnd();
+            device.stats.RenderTotal.accum = renderTotalReal.accum;
+        }
+        device.renderFrameDone.Set();
+    }
+}
+
 void CRenderDevice::SecondaryThreadProc(void* context)
 {
     auto& device = *static_cast<CRenderDevice*>(context);
@@ -127,7 +162,7 @@ void CRenderDevice::SecondaryThreadProc(void* context)
         for (u32 pit = 0; pit < device.seqParallel.size(); pit++)
             device.seqParallel[pit]();
         device.seqParallel.clear();
-        device.seqFrameMT.Process(rp_Frame);
+        device.seqFrameMT.Process();
         device.syncFrameDone.Set();
     }
 }
@@ -191,12 +226,11 @@ void CRenderDevice::on_idle()
         return;
     }
 
-    const auto FrameStartTime = TimerGlobal.GetElapsed_ms();
-
     if (psDeviceFlags.test(rsStatistic))
         g_bEnableStatGather = TRUE; // XXX: why not use either rsStatistic or g_bEnableStatGather?
     else
         g_bEnableStatGather = FALSE;
+
     if (g_loading_events.size())
     {
         if (g_loading_events.front()())
@@ -204,9 +238,14 @@ void CRenderDevice::on_idle()
         pApp->LoadDraw();
         return;
     }
+
+    const auto frameStartTime = TimerGlobal.GetElapsed_ms();
+
     if (!Device.dwPrecacheFrame && !g_SASH.IsBenchmarkRunning() && g_bLoaded)
         g_SASH.StartBenchmark();
+
     FrameMove();
+
     // Precache
     if (dwPrecacheFrame)
     {
@@ -222,25 +261,21 @@ void CRenderDevice::on_idle()
     mFullTransform.mul(mProject, mView);
     GEnv.Render->SetCacheXform(mView, mProject);
     mInvFullTransform.invert(mFullTransform);
-    vCameraPosition_saved = vCameraPosition;
-    mFullTransform_saved = mFullTransform;
-    mView_saved = mView;
-    mProject_saved = mProject;
+
+    vCameraPositionSaved = vCameraPosition;
+    vCameraDirectionSaved = vCameraDirection;
+    vCameraTopSaved = vCameraTop;
+    vCameraRightSaved = vCameraRight;
+
+    mFullTransformSaved = mFullTransform;
+    mViewSaved = mView;
+    mProjectSaved = mProject;
+
+    //renderProcessFrame.Set(); // allow render thread to do its job
     syncProcessFrame.Set(); // allow secondary thread to do its job
 
-#ifdef ECO_RENDER // ECO_RENDER START
-    static u32 time_frame = 0;
-    u32 time_curr = timeGetTime();
-    u32 time_diff = time_curr - time_frame;
-    time_frame = time_curr;
-    u32 optimal = 10;
-    if (Device.Paused() || IGame_Persistent::IsMainMenuActive())
-        optimal = 32;
-    if (time_diff < optimal)
-        Sleep(optimal - time_diff);
-#else
-    Sleep(0);
-#endif // ECO_RENDER END
+    const auto frameEndTime = TimerGlobal.GetElapsed_ms();
+    const auto frameTime = frameEndTime - frameStartTime;
 
     if (!GEnv.isDedicatedServer)
     {
@@ -250,7 +285,7 @@ void CRenderDevice::on_idle()
         renderTotalReal.Begin();
         if (b_is_Active && Begin())
         {
-            seqRender.Process(rp_Render);
+            seqRender.Process();
             CalcFrameStats();
             Statistic->Show();
             End(); // Present goes here
@@ -260,16 +295,20 @@ void CRenderDevice::on_idle()
         stats.RenderTotal.accum = renderTotalReal.accum;
     }
 
-    syncFrameDone.Wait(); // wait until secondary thread finish its job
+    // Eco render (by alpet)
+    u32 updateDelta = 0;
 
     if (GEnv.isDedicatedServer)
-    {
-        const auto FrameEndTime = TimerGlobal.GetElapsed_ms();
-        const auto FrameTime = (FrameEndTime - FrameStartTime);
-        const auto DSUpdateDelta = 1000 / g_svDedicateServerUpdateReate;
-        if (FrameTime < DSUpdateDelta)
-            Sleep(DSUpdateDelta - FrameTime);
-    }
+        updateDelta = 1000 / g_svDedicateServerUpdateReate;
+
+    else if (Device.Paused() || IGame_Persistent::IsMainMenuActive())
+        updateDelta = 10;
+
+    if (frameTime < updateDelta)
+        Sleep(updateDelta - frameTime);
+
+    syncFrameDone.Wait(); // wait until secondary thread finish its job
+    //renderFrameDone.Wait(); // wait until render thread finish its job
 
     if (!b_is_Active)
         Sleep(1);
@@ -322,17 +361,23 @@ void CRenderDevice::Run()
     }
     // Start all threads
     mt_bMustExit = FALSE;
-    ShowWindow(m_hWnd, SW_SHOWNORMAL);
     thread_spawn(SecondaryThreadProc, "X-RAY Secondary thread", 0, this);
+    //thread_spawn(RenderThreadProc, "X-RAY Render thread", 0, this);
     // Message cycle
-    seqAppStart.Process(rp_AppStart);
+    seqAppStart.Process();
     GEnv.Render->ClearTarget();
+    splash::hide();
+    ShowWindow(m_hWnd, SW_SHOWNORMAL);
+    pInput->ClipCursor(true);
     message_loop();
-    seqAppEnd.Process(rp_AppEnd);
+    seqAppEnd.Process();
     // Stop Balance-Thread
     mt_bMustExit = TRUE;
+    //renderProcessFrame.Set();
+    //renderThreadExit.Wait();
     syncProcessFrame.Set();
     syncThreadExit.Wait();
+
     while (mt_bMustExit)
         Sleep(0);
 }
@@ -383,7 +428,7 @@ void CRenderDevice::FrameMove()
     stats.EngineTotal.Begin();
     // TODO: HACK to test loading screen.
     // if(!g_bLoaded)
-    Device.seqFrame.Process(rp_Frame);
+    Device.seqFrame.Process();
     g_bLoaded = TRUE;
     // else
     // seqFrame.Process(rp_Frame);
@@ -449,15 +494,9 @@ void CRenderDevice::OnWM_Activate(WPARAM wParam, LPARAM /*lParam*/)
 
     const BOOL isWndActive = (fActive != WA_INACTIVE && !fMinimized) ? TRUE : FALSE;
     if (!editor() && !GEnv.isDedicatedServer && isWndActive)
-    {
         pInput->ClipCursor(true);
-        ShowCursor(FALSE);
-    }
     else
-    {
         pInput->ClipCursor(false);
-        ShowCursor(TRUE);
-    }
 
     extern int ps_always_active;
     const BOOL isGameActive = ps_always_active || isWndActive;
@@ -467,13 +506,13 @@ void CRenderDevice::OnWM_Activate(WPARAM wParam, LPARAM /*lParam*/)
         Device.b_is_Active = isGameActive;
         if (Device.b_is_Active)
         {
-            Device.seqAppActivate.Process(rp_AppActivate);
+            Device.seqAppActivate.Process();
             app_inactive_time += TimerMM.GetElapsed_ms() - app_inactive_time_start;
         }
         else
         {
             app_inactive_time_start = TimerMM.GetElapsed_ms();
-            Device.seqAppDeactivate.Process(rp_AppDeactivate);
+            Device.seqAppDeactivate.Process();
         }
     }
 }
@@ -521,9 +560,14 @@ void CLoadScreenRenderer::stop()
     if (!b_registered)
         return;
     Device.seqRender.Remove(this);
-    pApp->destroy_loading_shaders();
+    pApp->DestroyLoadingScreen();
     b_registered = false;
     b_need_user_input = false;
 }
 
 void CLoadScreenRenderer::OnRender() { pApp->load_draw_internal(); }
+
+bool CRenderDevice::CSecondVPParams::IsSVPFrame() //--#SM+#-- +SecondVP+
+{
+    return IsSVPActive() && Device.dwFrame % frameDelay == 0;
+}

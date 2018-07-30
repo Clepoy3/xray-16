@@ -5,22 +5,15 @@
 #pragma hdrstop
 
 #include "Layers/xrRender/HW.h"
+#include "xrEngine/xr_input.h"
 #include "xrEngine/XR_IOConsole.h"
 #include "Include/xrAPI/xrAPI.h"
 #include "xrCore/xr_token.h"
 
-#ifndef _EDITOR
+extern ENGINE_API xr_vector<xr_token> AvailableVideoModes;
+
 void fill_vid_mode_list(CHW* _hw);
 void free_vid_mode_list();
-
-void fill_render_mode_list();
-void free_render_mode_list();
-#else
-void	fill_vid_mode_list			(CHW* _hw)	{}
-void	free_vid_mode_list			()			{}
-void	fill_render_mode_list		()			{}
-void	free_render_mode_list		()			{}
-#endif
 
 CHW HW;
 
@@ -140,8 +133,6 @@ void CHW::CreateDevice(HWND hWnd, bool move_window)
     updateWindowProps(m_hWnd);
     fill_vid_mode_list(this);
 #endif
-
-    InitResources(resources);
 }
 
 void CHW::DestroyDevice()
@@ -165,9 +156,7 @@ void CHW::DestroyDevice()
         m_hDC = nullptr;
     }
 
-#ifndef _EDITOR
     free_vid_mode_list();
-#endif
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -252,172 +241,53 @@ void CHW::updateWindowProps(HWND m_hWnd)
         SetWindowLong(m_hWnd, GWL_STYLE, dwWindowStyle = WS_POPUP | WS_VISIBLE);
     }
 
-    ShowCursor(FALSE);
     SetForegroundWindow(m_hWnd);
 }
 
-struct _uniq_mode
+struct uniqueRenderingMode
 {
-    _uniq_mode(LPCSTR v): _val(v) {}
-    LPCSTR _val;
-    bool operator()(LPCSTR _other) { return !xr_stricmp(_val, _other); }
+    uniqueRenderingMode(pcstr v) : value(v) {}
+    pcstr value;
+    bool operator()(const xr_token other) const { return !xr_stricmp(value, other.name); }
 };
-
-#ifndef _EDITOR
 
 void free_vid_mode_list()
 {
-    for (int i = 0; GEnv.vid_mode_token[i].name; i++)
-    {
-        xr_free(GEnv.vid_mode_token[i].name);
-    }
-    xr_free(GEnv.vid_mode_token);
-    GEnv.vid_mode_token = nullptr;
+    for (auto& mode : AvailableVideoModes)
+        xr_free(mode.name);
+    AvailableVideoModes.clear();
 }
 
 void fill_vid_mode_list(CHW* /*_hw*/)
 {
-    if (GEnv.vid_mode_token != nullptr) return;
-    xr_vector<LPCSTR> _tmp;
+    if (!AvailableVideoModes.empty())
+        return;
 
     DWORD iModeNum = 0;
     DEVMODE dmi;
     ZeroMemory(&dmi, sizeof dmi);
     dmi.dmSize = sizeof dmi;
 
+    int i = 0;
+    auto& AVM = AvailableVideoModes;
     while (EnumDisplaySettings(nullptr, iModeNum++, &dmi) != 0)
     {
         string32 str;
 
-        if (dmi.dmPelsWidth < 800)
+        xr_sprintf(str, sizeof(str), "%dx%d", dmi.dmPelsWidth, dmi.dmPelsHeight);
+
+        if (AVM.cend() != find_if(AVM.cbegin(), AVM.cend(), uniqueRenderingMode(str)))
             continue;
 
-        sprintf_s(str, sizeof str, "%dx%d", dmi.dmPelsWidth, dmi.dmPelsHeight);
-
-        if (_tmp.end() != find_if(_tmp.begin(), _tmp.end(), _uniq_mode(str)))
-            continue;
-
-        _tmp.push_back(nullptr);
-        _tmp.back() = xr_strdup(str);
+        AVM.emplace_back(xr_token(xr_strdup(str), i));
+        ++i;
     }
+    AVM.emplace_back(xr_token(nullptr, -1));
 
-    u32 _cnt = _tmp.size() + 1;
-
-    GEnv.vid_mode_token = xr_alloc<xr_token>(_cnt);
-
-    GEnv.vid_mode_token[_cnt - 1].id = -1;
-    GEnv.vid_mode_token[_cnt - 1].name = nullptr;
-
-#ifdef DEBUG
-	Msg("Available video modes[%d]:", _tmp.size());
-#endif // DEBUG
-    for (u32 i = 0; i < _tmp.size(); ++i)
-    {
-        GEnv.vid_mode_token[i].id = i;
-        GEnv.vid_mode_token[i].name = _tmp[i];
-#ifdef DEBUG
-		Msg("[%s]", _tmp[i]);
-#endif // DEBUG
-    }
+    Msg("Available video modes[%d]:", AVM.size());
+    for (const auto& mode : AVM)
+        Msg("[%s]", mode.name);
 }
-
-
-void CHW::InitResources(TBuiltInResource& Resources)
-{
-    Resources.maxLights = 32;
-    Resources.maxClipPlanes = 6;
-    Resources.maxTextureUnits = 32;
-    Resources.maxTextureCoords = 32;
-    Resources.maxVertexAttribs = 64;
-    Resources.maxVertexUniformComponents = 4096;
-    Resources.maxVaryingFloats = 64;
-    Resources.maxVertexTextureImageUnits = 32;
-    Resources.maxCombinedTextureImageUnits = 80;
-    Resources.maxTextureImageUnits = 32;
-    Resources.maxFragmentUniformComponents = 4096;
-    Resources.maxDrawBuffers = 32;
-    Resources.maxVertexUniformVectors = 128;
-    Resources.maxVaryingVectors = 8;
-    Resources.maxFragmentUniformVectors = 16;
-    Resources.maxVertexOutputVectors = 16;
-    Resources.maxFragmentInputVectors = 15;
-    Resources.minProgramTexelOffset = -8;
-    Resources.maxProgramTexelOffset = 7;
-    Resources.maxClipDistances = 8;
-    Resources.maxComputeWorkGroupCountX = 65535;
-    Resources.maxComputeWorkGroupCountY = 65535;
-    Resources.maxComputeWorkGroupCountZ = 65535;
-    Resources.maxComputeWorkGroupSizeX = 1024;
-    Resources.maxComputeWorkGroupSizeY = 1024;
-    Resources.maxComputeWorkGroupSizeZ = 64;
-    Resources.maxComputeUniformComponents = 1024;
-    Resources.maxComputeTextureImageUnits = 16;
-    Resources.maxComputeImageUniforms = 8;
-    Resources.maxComputeAtomicCounters = 8;
-    Resources.maxComputeAtomicCounterBuffers = 1;
-    Resources.maxVaryingComponents = 60;
-    Resources.maxVertexOutputComponents = 64;
-    Resources.maxGeometryInputComponents = 64;
-    Resources.maxGeometryOutputComponents = 128;
-    Resources.maxFragmentInputComponents = 128;
-    Resources.maxImageUnits = 8;
-    Resources.maxCombinedImageUnitsAndFragmentOutputs = 8;
-    Resources.maxCombinedShaderOutputResources = 8;
-    Resources.maxImageSamples = 0;
-    Resources.maxVertexImageUniforms = 0;
-    Resources.maxTessControlImageUniforms = 0;
-    Resources.maxTessEvaluationImageUniforms = 0;
-    Resources.maxGeometryImageUniforms = 0;
-    Resources.maxFragmentImageUniforms = 8;
-    Resources.maxCombinedImageUniforms = 8;
-    Resources.maxGeometryTextureImageUnits = 16;
-    Resources.maxGeometryOutputVertices = 256;
-    Resources.maxGeometryTotalOutputComponents = 1024;
-    Resources.maxGeometryUniformComponents = 1024;
-    Resources.maxGeometryVaryingComponents = 64;
-    Resources.maxTessControlInputComponents = 128;
-    Resources.maxTessControlOutputComponents = 128;
-    Resources.maxTessControlTextureImageUnits = 16;
-    Resources.maxTessControlUniformComponents = 1024;
-    Resources.maxTessControlTotalOutputComponents = 4096;
-    Resources.maxTessEvaluationInputComponents = 128;
-    Resources.maxTessEvaluationOutputComponents = 128;
-    Resources.maxTessEvaluationTextureImageUnits = 16;
-    Resources.maxTessEvaluationUniformComponents = 1024;
-    Resources.maxTessPatchComponents = 120;
-    Resources.maxPatchVertices = 32;
-    Resources.maxTessGenLevel = 64;
-    Resources.maxViewports = 16;
-    Resources.maxVertexAtomicCounters = 0;
-    Resources.maxTessControlAtomicCounters = 0;
-    Resources.maxTessEvaluationAtomicCounters = 0;
-    Resources.maxGeometryAtomicCounters = 0;
-    Resources.maxFragmentAtomicCounters = 8;
-    Resources.maxCombinedAtomicCounters = 8;
-    Resources.maxAtomicCounterBindings = 1;
-    Resources.maxVertexAtomicCounterBuffers = 0;
-    Resources.maxTessControlAtomicCounterBuffers = 0;
-    Resources.maxTessEvaluationAtomicCounterBuffers = 0;
-    Resources.maxGeometryAtomicCounterBuffers = 0;
-    Resources.maxFragmentAtomicCounterBuffers = 1;
-    Resources.maxCombinedAtomicCounterBuffers = 1;
-    Resources.maxAtomicCounterBufferSize = 16384;
-    Resources.maxTransformFeedbackBuffers = 4;
-    Resources.maxTransformFeedbackInterleavedComponents = 64;
-    Resources.maxCullDistances = 8;
-    Resources.maxCombinedClipAndCullDistances = 8;
-    Resources.maxSamples = 4;
-    Resources.limits.nonInductiveForLoops = 1;
-    Resources.limits.whileLoops = 1;
-    Resources.limits.doWhileLoops = 1;
-    Resources.limits.generalUniformIndexing = 1;
-    Resources.limits.generalAttributeMatrixVectorIndexing = 1;
-    Resources.limits.generalVaryingIndexing = 1;
-    Resources.limits.generalSamplerIndexing = 1;
-    Resources.limits.generalVariableIndexing = 1;
-    Resources.limits.generalConstantMatrixVectorIndexing = 1;
-}
-
 
 void CHW::UpdateViews()
 {
@@ -492,4 +362,3 @@ HRESULT CHW::Present(UINT /*SyncInterval*/, UINT /*Flags*/)
     RImplementation.Target->phase_flip();
     return SwapBuffers(m_hDC) ? S_OK : E_FAIL;
 }
-#endif

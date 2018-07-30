@@ -3,47 +3,81 @@
 #include "stdafx.h"
 #pragma hdrstop
 
+#if defined(WINDOWS)
 #include <mmsystem.h>
 #include <objbase.h>
+#pragma comment(lib, "winmm.lib")
+#endif
 #include "xrCore.h"
 #include "Threading/ThreadPool.hpp"
 #include "Math/MathUtil.hpp"
 #include "xrCore/_std_extensions.h"
 
-#pragma comment(lib, "winmm.lib")
-
-#ifdef DEBUG
-#include <malloc.h>
-#endif // DEBUG
+#include "Compression/compression_ppmd_stream.h"
+extern compression::ppmd::stream* trained_model;
 
 XRCORE_API xrCore Core;
 
-namespace CPU
-{
-extern void Detect();
-}
-
 static u32 init_counter = 0;
 
-//. extern xr_vector<shared_str>* LogFile;
+#define DO_EXPAND(VAL) VAL##1
+#define EXPAND(VAL) DO_EXPAND(VAL)
+
+#if EXPAND(CI) == 1
+#undef CI
+#endif
+
+#define HELPER(s) #s
+#define TO_STRING(s) HELPER(s)
+
+void PrintCI()
+{
+#if defined(CI)
+    pcstr name = nullptr;
+    pcstr buildId = nullptr;
+    pcstr builder = nullptr;
+    pcstr commit = nullptr;
+#if defined(APPVEYOR)
+    name = "AppVeyor";
+    buildId = TO_STRING(APPVEYOR_BUILD_VERSION);
+    builder = TO_STRING(APPVEYOR_ACCOUNT_NAME);
+    commit = TO_STRING(APPVEYOR_REPO_COMMIT);
+#else
+#pragma TODO("PrintCI for other CIs")
+    return;
+#endif
+    Msg("%s build %s from commit %s (built by %s)", name, buildId, commit, builder);
+#else
+    Log("This is a custom build");
+#endif
+}
 
 void xrCore::Initialize(pcstr _ApplicationName, LogCallback cb, bool init_fs, pcstr fs_fname, bool plugin)
 {
-    CalculateBuildId();
     xr_strcpy(ApplicationName, _ApplicationName);
     if (0 == init_counter)
     {
+        CalculateBuildId();
         PluginMode = plugin;
         // Init COM so we can use CoCreateInstance
         // HRESULT co_res =
+#if defined(WINDOWS)
         Params = xr_strdup(GetCommandLine());
-        if (!strstr(Params, "-editor"))
+#elif  defined(LINUX)
+        Params = xr_strdup(""); //TODO handle /proc/self/cmdline
+#endif
+
+#if defined(WINDOWS)
+        if (!strstr(Params, "-weather"))
             CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+#endif
 
         string_path fn, dr, di;
 
         // application path
+#if defined(WINDOWS)
         GetModuleFileName(GetModuleHandle("xrCore"), fn, sizeof(fn));
+#endif
         _splitpath(fn, dr, di, nullptr, nullptr);
         strconcat(sizeof(ApplicationPath), ApplicationPath, dr, di);
 
@@ -57,22 +91,23 @@ void xrCore::Initialize(pcstr _ApplicationName, LogCallback cb, bool init_fs, pc
         }
 #endif
 
+#if defined(WINDOWS)
         GetCurrentDirectory(sizeof(WorkingPath), WorkingPath);
+#endif
 
+#if defined(WINDOWS)
         // User/Comp Name
         DWORD sz_user = sizeof(UserName);
         GetUserName(UserName, &sz_user);
 
         DWORD sz_comp = sizeof(CompName);
         GetComputerName(CompName, &sz_comp);
-
-        // Mathematics & PSI detection
-        CPU::Detect();
+#endif
 
         Memory._initialize();
 
-        InitLog();
         Msg("%s %s build %d, %s\n", "OpenXRay", GetBuildConfiguration(), buildId, buildDate);
+        PrintCI();
         Msg("command line %s\n", Params);
         _initialize_cpu();
         R_ASSERT(CPU::ID.hasFeature(CpuFeature::Sse));
@@ -82,9 +117,9 @@ void xrCore::Initialize(pcstr _ApplicationName, LogCallback cb, bool init_fs, pc
 
         rtc_initialize();
 
-        xr_FS = new CLocatorAPI();
+        xr_FS = std::make_unique<CLocatorAPI>();
 
-        xr_EFS = new EFS_Utils();
+        xr_EFS = std::make_unique<EFS_Utils>();
         //. R_ASSERT (co_res==S_OK);
     }
     if (init_fs)
@@ -123,10 +158,6 @@ void xrCore::Initialize(pcstr _ApplicationName, LogCallback cb, bool init_fs, pc
     init_counter++;
 }
 
-#ifndef _EDITOR
-#include "compression_ppmd_stream.h"
-extern compression::ppmd::stream* trained_model;
-#endif
 void xrCore::_destroy()
 {
     --init_counter;
@@ -135,17 +166,15 @@ void xrCore::_destroy()
         ttapi.destroy();
         FS._destroy();
         EFS._destroy();
-        xr_delete(xr_FS);
-        xr_delete(xr_EFS);
+        xr_FS.reset();
+        xr_EFS.reset();
 
-#ifndef _EDITOR
         if (trained_model)
         {
             void* buffer = trained_model->buffer();
             xr_free(buffer);
             xr_delete(trained_model);
         }
-#endif
         xr_free(Params);
         Memory._destroy();
     }
@@ -203,7 +232,7 @@ void xrCore::CalculateBuildId()
         buildId -= daysInMonth[i];
 }
 
-//. why ???
+#if defined(WINDOWS)
 #ifdef _EDITOR
 BOOL WINAPI DllEntryPoint(HINSTANCE hinstDLL, DWORD ul_reason_for_call, LPVOID lpvReserved)
 #else
@@ -212,24 +241,24 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD ul_reason_for_call, LPVOID lpvRese
 {
     switch (ul_reason_for_call)
     {
-    case DLL_PROCESS_ATTACH:
-    {
-        _clear87();
-        _control87(_PC_53, MCW_PC);
-        _control87(_RC_CHOP, MCW_RC);
-        _control87(_RC_NEAR, MCW_RC);
-        _control87(_MCW_EM, MCW_EM);
-    }
-    //. LogFile.reserve (256);
-    break;
-    case DLL_THREAD_ATTACH:
-        if (!strstr(GetCommandLine(), "-editor"))
-            CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        timeBeginPeriod(1);
-        break;
-    case DLL_THREAD_DETACH: break;
-    case DLL_PROCESS_DETACH:
-        break;
+    /*
+    По сути это не рекомендуемый Microsoft, но повсеместно используемый способ повышения точности
+    соблюдения и измерения временных интревалов функциями Sleep, QueryPerformanceCounter,
+    timeGetTime и GetTickCount.
+    Функция действует на всю операционную систему в целом (!) и нет необходимости вызывать её при
+    старте нового потока. Вызов timeEndPeriod специалисты Microsoft считают обязательным.
+    Есть подозрения, что Windows сама устанавливает максимальную точность при старте таких
+    приложений как, например, игры. Тогда есть шанс, что вызов timeBeginPeriod здесь бессмысленен.
+    Недостатком данного способа является то, что он приводит к общему замедлению работы как
+    текущего приложения, так и всей операционной системы.
+    Ещё можно посмотреть ссылки:
+        https://msdn.microsoft.com/en-us/library/vs/alm/dd757624(v=vs.85).aspx
+        https://users.livejournal.com/-winnie/151099.html
+        https://github.com/tebjan/TimerTool
+    */
+    case DLL_PROCESS_ATTACH: timeBeginPeriod(1); break;
+    case DLL_PROCESS_DETACH: timeEndPeriod  (1); break;
     }
     return TRUE;
 }
+#endif

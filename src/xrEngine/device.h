@@ -13,9 +13,9 @@
 
 #include "xrCore/FTimer.h"
 #include "Stats.h"
+#include "xrCommon/xr_list.h"
 #include "xrCore/Threading/Event.hpp"
 #include "xrCore/fastdelegate.h"
-#include "xrCommon/xr_list.h"
 #include "xrCore/ModuleLookup.hpp"
 
 #define VIEWPORT_NEAR 0.2f
@@ -25,7 +25,6 @@
 #include "Include/editor/interfaces.hpp"
 #include "Include/xrRender/FactoryPtr.h"
 #include "Render.h"
-
 
 class engine_impl;
 
@@ -91,11 +90,14 @@ public:
     Fmatrix mFullTransform;
 
     // Copies of corresponding members. Used for synchronization.
-    Fvector vCameraPosition_saved;
+    Fvector vCameraPositionSaved;
+    Fvector vCameraDirectionSaved;
+    Fvector vCameraTopSaved;
+    Fvector vCameraRightSaved;
 
-    Fmatrix mView_saved;
-    Fmatrix mProject_saved;
-    Fmatrix mFullTransform_saved;
+    Fmatrix mViewSaved;
+    Fmatrix mProjectSaved;
+    Fmatrix mFullTransformSaved;
 
     float fFOV;
     float fASPECT;
@@ -107,13 +109,13 @@ protected:
 
 public:
     // Registrators
-    CRegistrator<pureRender> seqRender;
-    CRegistrator<pureAppActivate> seqAppActivate;
-    CRegistrator<pureAppDeactivate> seqAppDeactivate;
-    CRegistrator<pureAppStart> seqAppStart;
-    CRegistrator<pureAppEnd> seqAppEnd;
-    CRegistrator<pureFrame> seqFrame;
-    CRegistrator<pureScreenResolutionChanged> seqResolutionChanged;
+    MessageRegistry<pureRender> seqRender;
+    MessageRegistry<pureAppActivate> seqAppActivate;
+    MessageRegistry<pureAppDeactivate> seqAppDeactivate;
+    MessageRegistry<pureAppStart> seqAppStart;
+    MessageRegistry<pureAppEnd> seqAppEnd;
+    MessageRegistry<pureFrame> seqFrame;
+    MessageRegistry<pureScreenResolutionChanged> seqResolutionChanged;
 
     HWND m_hWnd;
 };
@@ -129,6 +131,29 @@ protected:
 // refs
 class ENGINE_API CRenderDevice : public CRenderDeviceBase
 {
+public:
+    class ENGINE_API CSecondVPParams //--#SM+#-- +SecondVP+
+    {
+        bool isActive; // Флаг активации рендера во второй вьюпорт
+        u8 frameDelay;  // На каком кадре с момента прошлого рендера во второй вьюпорт мы начнём новый
+                          //(не может быть меньше 2 - каждый второй кадр, чем больше тем более низкий FPS во втором вьюпорте)
+    
+    public:
+        bool isCamReady; // Флаг готовности камеры (FOV, позиция, и т.п) к рендеру второго вьюпорта
+
+        IC bool IsSVPActive() { return isActive; }
+        IC void SetSVPActive(bool bState) { isActive = bState; }
+        bool    IsSVPFrame();
+
+        IC u8 GetSVPFrameDelay() { return frameDelay; }
+        void  SetSVPFrameDelay(u8 iDelay)
+        {
+            frameDelay = iDelay;
+            clamp<u8>(frameDelay, 2, u8(-1));
+        }
+    };
+
+private:
     // Main objects used for creating and rendering the 3D scene
     u32 m_dwWindowStyle;
     CTimer TimerMM;
@@ -174,9 +199,10 @@ public:
 
     void DumpResourcesMemoryUsage() { GEnv.Render->ResourcesDumpMemoryUsage(); }
 
-    CRegistrator<pureFrame> seqFrameMT;
-    CRegistrator<pureDeviceReset> seqDeviceReset;
+    MessageRegistry<pureFrame> seqFrameMT;
+    MessageRegistry<pureDeviceReset> seqDeviceReset;
     xr_vector<fastdelegate::FastDelegate0<>> seqParallel;
+	CSecondVPParams m_SecondViewport;	//--#SM+#-- +SecondVP+
 
     Fmatrix mInvFullTransform;
 
@@ -190,6 +216,10 @@ public:
         b_is_Ready = FALSE;
         Timer.Start();
         m_bNearer = FALSE;
+        //--#SM+#-- +SecondVP+
+        m_SecondViewport.SetSVPActive(false);
+        m_SecondViewport.SetSVPFrameDelay(2);
+        m_SecondViewport.isCamReady = false;
     };
 
     void Pause(BOOL bOn, BOOL bTimer, BOOL bSound, LPCSTR reason);
@@ -197,6 +227,7 @@ public:
 
 private:
     static void SecondaryThreadProc(void* context);
+    static void RenderThreadProc(void* context);
 
 public:
     // Scene control
@@ -238,7 +269,8 @@ public:
     }
 
 private:
-    Event syncProcessFrame, syncFrameDone, syncThreadExit;
+    Event syncProcessFrame, syncFrameDone, syncThreadExit; // Secondary thread events
+    Event renderProcessFrame, renderFrameDone, renderThreadExit; // Render thread events
 
 public:
     volatile BOOL mt_bMustExit;
@@ -300,6 +332,7 @@ public:
     void start(bool b_user_input);
     void stop();
     virtual void OnRender();
+    bool IsActive() const { return b_registered; }
 
     bool b_registered;
     bool b_need_user_input;

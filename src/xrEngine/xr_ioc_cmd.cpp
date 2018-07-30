@@ -4,8 +4,9 @@
 #include "x_ray.h"
 #include "XR_IOConsole.h"
 #include "xr_ioc_cmd.h"
+#include "xrSASH.h"
 
-#include "cameramanager.h"
+#include "CameraManager.h"
 #include "Environment.h"
 #include "xr_input.h"
 #include "CustomHUD.h"
@@ -13,9 +14,22 @@
 #include "xr_object.h"
 #include "xr_object_list.h"
 
+ENGINE_API xr_vector<xr_token> AvailableVideoModes;
 xr_vector<xr_token> vid_quality_token;
 
 const xr_token vid_bpp_token[] = {{"16", 16}, {"32", 32}, {0, 0}};
+
+void IConsole_Command::InvalidSyntax()
+{
+    TInfo I;
+    Info(I);
+    Msg("~ Invalid syntax in call to '%s'", cName);
+    Msg("~ Valid arguments: %s", I);
+
+    g_SASH.OnConsoleInvalidSyntax(false, "~ Invalid syntax in call to '%s'", cName);
+    g_SASH.OnConsoleInvalidSyntax(true, "~ Valid arguments: %s", I);
+}
+
 //-----------------------------------------------------------------------
 
 void IConsole_Command::add_to_LRU(shared_str const& arg)
@@ -376,7 +390,7 @@ public:
         }
     }
     virtual void Status(TStatus& S) { xr_sprintf(S, sizeof(S), "%dx%d", psCurrentVidMode[0], psCurrentVidMode[1]); }
-    const xr_token* GetToken() noexcept override { return GEnv.vid_mode_token; }
+    const xr_token* GetToken() noexcept override { return AvailableVideoModes.data(); }
     virtual void Info(TInfo& I) { xr_strcpy(I, sizeof(I), "change screen resolution WxH"); }
     virtual void fill_tips(vecTips& tips, u32 mode)
     {
@@ -626,6 +640,7 @@ extern Flags32 psEnvFlags;
 // extern float r__dtex_range;
 
 extern int g_ErrorLineCount;
+extern int ps_rs_loading_stages;
 
 ENGINE_API int ps_always_active = 0;
 
@@ -674,6 +689,7 @@ void CCC_Register()
     // Render device states
     CMD4(CCC_Integer, "r__supersample", &ps_r__Supersample, 1, 4);
 
+    CMD4(CCC_Integer, "rs_loadingstages", &ps_rs_loading_stages, 0, 1);
     CMD3(CCC_Mask, "rs_v_sync", &psDeviceFlags, rsVSync);
     // CMD3(CCC_Mask, "rs_disable_objects_as_crows",&psDeviceFlags, rsDisableObjectsAsCrows );
     CMD3(CCC_Mask, "rs_fullscreen", &psDeviceFlags, rsFullscreen);

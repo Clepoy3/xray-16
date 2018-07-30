@@ -124,6 +124,8 @@ bool CUIXmlInit::InitOptionsItem(CUIXml& xml_doc, LPCSTR path, int index, CUIOpt
                 d = CUIOptionsItem::sdVidRestart;
             else if (0 == xr_stricmp(depends, "snd"))
                 d = CUIOptionsItem::sdSndRestart;
+            else if (0 == xr_stricmp(depends, "ui"))
+                d = CUIOptionsItem::sdUIRestart;
             else if (0 == xr_stricmp(depends, "restart"))
                 d = CUIOptionsItem::sdSystemRestart;
             else if (0 == xr_stricmp(depends, "runtime"))
@@ -559,6 +561,22 @@ bool CUIXmlInit::InitProgressBar(CUIXml& xml_doc, LPCSTR path, int index, CUIPro
     {
         mode = CUIProgressBar::om_down;
     }
+    else if (xr_stricmp(mode_str, "from_center") == 0)
+    {
+        mode = CUIProgressBar::om_fromcenter;
+    }
+    else if (xr_stricmp(mode_str, "vert_from_center") == 0)
+    {
+        mode = CUIProgressBar::om_vfromcenter;
+    }
+    else if (xr_stricmp(mode_str, "to_center") == 0)
+    {
+        mode = CUIProgressBar::om_tocenter;
+    }
+    else if (xr_stricmp(mode_str, "vert_to_center") == 0)
+    {
+        mode = CUIProgressBar::om_vtocenter;
+    }
 
     pWnd->InitProgressBar(pos, size, mode);
 
@@ -569,6 +587,8 @@ bool CUIXmlInit::InitProgressBar(CUIXml& xml_doc, LPCSTR path, int index, CUIPro
     pWnd->SetRange(min, max);
     pWnd->SetProgressPos(ppos);
     pWnd->m_inertion = xml_doc.ReadAttribFlt(path, index, "inertion", 0.0f);
+    pWnd->colorSmoothing = xml_doc.ReadAttribInt(path, index, "color_smoothing");
+
     // progress
     strconcat(sizeof(buf), buf, path, ":progress");
 

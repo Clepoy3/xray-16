@@ -186,6 +186,9 @@ void D3DXRenderBase::r_dsgraph_render_graph(u32 _priority)
 #ifdef USE_DX11
                                         RCache.LOD.set_LOD(LOD);
 #endif
+                                        //--#SM+#-- Обновляем шейдерные данные модели [update shader values for this model]
+                                        RCache.hemi.c_update(it_it.pVisual);
+
                                         it_it.pVisual->Render(LOD);
                                     }
                                     items.clear();
@@ -301,6 +304,9 @@ void D3DXRenderBase::r_dsgraph_render_graph(u32 _priority)
 #ifdef USE_DX11
                                     RCache.LOD.set_LOD(LOD);
 #endif
+                                    //--#SM+#-- Обновляем шейдерные данные модели [update shader values for this model]
+                                    RCache.hemi.c_update(ni_it.pVisual);
+
                                     ni_it.pVisual->Render(LOD);
                                 }
                                 items.clear();
@@ -349,6 +355,23 @@ public:
         // Change projection
         Pold  = Device.mProject;
         FTold = Device.mFullTransform;
+
+        // XXX: Xottab_DUTY: custom FOV. Implement it someday
+        // It should be something like this:
+        // float customFOV;
+        // if (isCustomFOV)
+        //     customFOV = V->getVisData().obj_data->m_hud_custom_fov;
+        // else
+        //     customFOV = psHUD_FOV * Device.fFOV;
+        //
+        // Device.mProject.build_projection(deg2rad(customFOV), Device.fASPECT,
+        //    VIEWPORT_NEAR, g_pGamePersistent->Environment().CurrentEnv->far_plane);
+        //
+        // Look at the function:
+        // void __fastcall sorted_L1_HUD(mapSorted_Node* N)
+        // In the commit:
+        // https://github.com/ShokerStlk/xray-16-SWM/commit/869de0b6e74ac05990f541e006894b6fe78bd2a5#diff-4199ef700b18ce4da0e2b45dee1924d0R83
+
         Device.mProject.build_projection(deg2rad(psHUD_FOV * Device.fFOV /* *Device.fASPECT*/), Device.fASPECT,
             VIEWPORT_NEAR, g_pGamePersistent->Environment().CurrentEnv->far_plane);
 
@@ -378,6 +401,8 @@ IC void render_item(T &item)
     RCache.set_xform_world(item.second.Matrix);
     RImplementation.apply_object(item.second.pObject);
     RImplementation.apply_lmaterial();
+    //--#SM+#-- Обновляем шейдерные данные модели [update shader values for this model]
+    RCache.hemi.c_update(V);
     V->Render(calcLOD(item.first, V->vis.sphere.R));
 }
 
@@ -600,16 +625,18 @@ void D3DXRenderBase::r_dsgraph_render_R1_box(IRender_Sector* S, Fbox& BB, int sh
     lstVisuals.clear();
     lstVisuals.push_back(((CSector*)S)->root());
 
-    for (auto &it : lstVisuals)
+    for (size_t test = 0; test < lstVisuals.size(); ++test)
     {
+        dxRender_Visual* V = lstVisuals[test];
+
         // Visual is 100% visible - simply add it
-        switch (it->Type)
+        switch (V->Type)
         {
         case MT_HIERRARHY:
         {
             // Add all children
-            FHierrarhyVisual* pV = (FHierrarhyVisual*)it;
-            for (auto &i : pV->children)
+            FHierrarhyVisual* pV = (FHierrarhyVisual*)V;
+            for (auto& i : pV->children)
             {
                 dxRender_Visual* T = i;
                 if (BB.intersect(T->vis.box))
@@ -621,9 +648,9 @@ void D3DXRenderBase::r_dsgraph_render_R1_box(IRender_Sector* S, Fbox& BB, int sh
         case MT_SKELETON_RIGID:
         {
             // Add all children	(s)
-            CKinematics* pV = (CKinematics*)it;
+            CKinematics* pV = (CKinematics*)V;
             pV->CalculateBones(TRUE);
-            for (auto &i : pV->children)
+            for (auto& i : pV->children)
             {
                 dxRender_Visual* T = i;
                 if (BB.intersect(T->vis.box))
@@ -633,8 +660,8 @@ void D3DXRenderBase::r_dsgraph_render_R1_box(IRender_Sector* S, Fbox& BB, int sh
         break;
         case MT_LOD:
         {
-            FLOD* pV = (FLOD*)it;
-            for (auto &i : pV->children)
+            FLOD* pV = (FLOD*)V;
+            for (auto& i : pV->children)
             {
                 dxRender_Visual* T = i;
                 if (BB.intersect(T->vis.box))
@@ -645,13 +672,13 @@ void D3DXRenderBase::r_dsgraph_render_R1_box(IRender_Sector* S, Fbox& BB, int sh
         default:
         {
             // Renderable visual
-            ShaderElement* E2 = it->shader->E[sh]._get();
+            ShaderElement* E2 = V->shader->E[sh]._get();
             if (E2 && !(E2->flags.bDistort))
             {
                 for (u32 pass = 0; pass < E2->passes.size(); pass++)
                 {
                     RCache.set_Element(E2, pass);
-                    it->Render(-1.f);
+                    V->Render(-1.f);
                 }
             }
         }

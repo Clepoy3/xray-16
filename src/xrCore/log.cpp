@@ -183,13 +183,11 @@ LogCallback SetLogCB(const LogCallback& cb)
 }
 
 LPCSTR log_name() { return (log_file_name); }
-void InitLog()
-{
-    LogFile.reserve(1000);
-}
 
 void CreateLog(BOOL nl)
 {
+    LogFile.reserve(1000);
+
     no_log = nl;
     strconcat(sizeof(log_file_name), log_file_name, Core.ApplicationName, "_", Core.UserName, ".log");
     if (FS.path_exist("$logs$"))
@@ -199,7 +197,9 @@ void CreateLog(BOOL nl)
         IWriter* f = FS.w_open(logFName);
         if (f == NULL)
         {
+#if defined(WINDOWS)
             MessageBox(NULL, "Can't create log file.", "Error", MB_ICONERROR);
+#endif
             abort();
         }
         FS.w_close(f);

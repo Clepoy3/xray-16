@@ -32,14 +32,14 @@ void bwdithermap(int levels, int magic[16][16])
     float N = 255.0f / (levels - 1);
 
     /*
-    * Expand 4x4 dither pattern to 16x16.  4x4 leaves obvious patterning,
-    * and doesn't give us full intensity range (only 17 sublevels).
-    *
-    * magicfact is (N - 1)/16 so that we get numbers in the matrix from 0 to
-    * N - 1: mod N gives numbers in 0 to N - 1, don't ever want all
-    * pixels incremented to the next level (this is reserved for the
-    * pixel value with mod N == 0 at the next level).
-    */
+     * Expand 4x4 dither pattern to 16x16.  4x4 leaves obvious patterning,
+     * and doesn't give us full intensity range (only 17 sublevels).
+     *
+     * magicfact is (N - 1)/16 so that we get numbers in the matrix from 0 to
+     * N - 1: mod N gives numbers in 0 to N - 1, don't ever want all
+     * pixels incremented to the next level (this is reserved for the
+     * pixel value with mod N == 0 at the next level).
+     */
 
     float magicfact = (N - 1) / 16;
     for (int i = 0; i < 4; i++)
@@ -139,8 +139,7 @@ CDetailManager::~CDetailManager()
     xr_free(cache_level1);
 #endif
 }
-/*
-*/
+
 #ifndef _EDITOR
 
 /*
@@ -240,14 +239,14 @@ extern ECORE_API float r_ssaDISCARD;
 
 void CDetailManager::UpdateVisibleM()
 {
-    Fvector EYE = RDEVICE.vCameraPosition_saved;
+    for (int i = 0; i != 3; ++i)
+        for (auto& vis : m_visibles[i])
+            vis.clear();
+
+    Fvector EYE = Device.vCameraPositionSaved;
 
     CFrustum View;
-    View.CreateFromMatrix(RDEVICE.mFullTransform_saved, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
-
-    CFrustum View_old;
-    Fmatrix Viewm_old = RDEVICE.mFullTransform;
-    View_old.CreateFromMatrix(Viewm_old, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
+    View.CreateFromMatrix(Device.mFullTransformSaved, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
 
     float fade_limit = dm_fade;
     fade_limit = fade_limit * fade_limit;
@@ -389,6 +388,7 @@ void CDetailManager::Render()
     MT_SYNC();
 
     RImplementation.BasicStats.DetailRender.Begin();
+    g_pGamePersistent->m_pGShaderConstants->m_blender_mode.w = 1.0f; //--#SM+#-- Флаг начала рендера травы [begin of grass render]
 
 #ifndef _EDITOR
     float factor = g_pGamePersistent->Environment().wind_strength_factor;
@@ -404,6 +404,8 @@ void CDetailManager::Render()
     else
         soft_Render();
     RCache.set_CullMode(CULL_CCW);
+
+    g_pGamePersistent->m_pGShaderConstants->m_blender_mode.w = 0.0f; //--#SM+#-- Флаг конца рендера травы [end of grass render]
     RImplementation.BasicStats.DetailRender.End();
     m_frame_rendered = RDEVICE.dwFrame;
 }
@@ -423,7 +425,7 @@ void __stdcall CDetailManager::MT_CALC()
     if (m_frame_calc != RDEVICE.dwFrame)
         if ((m_frame_rendered + 1) == RDEVICE.dwFrame) // already rendered
         {
-            Fvector EYE = RDEVICE.vCameraPosition_saved;
+            Fvector EYE = RDEVICE.vCameraPositionSaved;
 
             int s_x = iFloor(EYE.x / dm_slot_size + .5f);
             int s_z = iFloor(EYE.z / dm_slot_size + .5f);

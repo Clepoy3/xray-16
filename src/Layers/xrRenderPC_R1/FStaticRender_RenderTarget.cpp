@@ -5,12 +5,14 @@
 static LPCSTR RTname = "$user$rendertarget";
 static LPCSTR RTname_color_map = "$user$rendertarget_color_map";
 static LPCSTR RTname_distort = "$user$distort";
+static LPCSTR RTname_SecondVP = "$user$viewport2"; //--#SM+#-- +SecondVP+
 
 CRenderTarget::CRenderTarget()
 {
     bAvailable = FALSE;
     RT = nullptr;
     RT_color_map = nullptr;
+    RT_SecondVP  = nullptr; //--#SM+# +SecondVP+
     pTempZB = nullptr;
     ZB = nullptr;
     pFB = nullptr;
@@ -26,7 +28,7 @@ CRenderTarget::CRenderTarget()
     param_color_map_influence = 0.0f;
     param_color_map_interpolate = 0.0f;
 
-    im_noise_time = 1 / 100.0f;
+    im_noise_time = 1.f / 100.0f;
     im_noise_shift_w = 0;
     im_noise_shift_h = 0;
 
@@ -63,6 +65,8 @@ BOOL CRenderTarget::Create()
         RT_color_map.create(RTname_color_map, curWidth, curHeight, HW.Caps.fTarget);
     }
     // RImplementation.o.color_mapping = RT_color_map->valid();
+
+    RT_SecondVP.create(RTname_SecondVP, rtWidth, rtHeight, HW.Caps.fTarget); //--#SM+#-- +SecondVP+
 
     if ((rtHeight != Device.dwHeight) || (rtWidth != Device.dwWidth))
     {
@@ -111,6 +115,7 @@ CRenderTarget::~CRenderTarget()
     s_postprocess_D[0].destroy();
     s_postprocess[1].destroy();
     g_postprocess.destroy();
+    RT_SecondVP.destroy(); //--#SM+#-- +SecondVP+
     RT_distort.destroy();
     RT_color_map.destroy();
     RT.destroy();

@@ -54,7 +54,7 @@ CObjectList::~CObjectList()
 
 IGameObject* CObjectList::FindObjectByName(shared_str name)
 {
-    for (auto it : objects_active)
+    for (auto& it : objects_active)
         if (it->cName().equal(name))
             return it;
 
@@ -201,10 +201,10 @@ void CObjectList::SingleUpdate(IGameObject* O)
 
 void CObjectList::clear_crow_vec(Objects& o)
 {
-    for (u32 _it = 0; _it < o.size(); _it++)
+    for (auto& it : o)
     {
-        // Msg ("[%d][0x%08x]IAmNotACrowAnyMore (clear_crow_vec)", Device.dwFrame, dynamic_cast<void*>(o[_it]));
-        o[_it]->IAmNotACrowAnyMore();
+        // Msg ("[%d][0x%08x]IAmNotACrowAnyMore (clear_crow_vec)", Device.dwFrame, dynamic_cast<void*>(it));
+        it->IAmNotACrowAnyMore();
     }
     o.clear();
 }
@@ -278,6 +278,13 @@ void CObjectList::Update(bool bForce)
 
             for (IGameObject** i = b; i != e; ++i)
                 SingleUpdate(*i);
+
+            //--#SM+#-- PostUpdateCL для всех клиентских объектов [for crowed and non-crowed]
+            for (auto& object : objects_active)
+                object->PostUpdateCL(false);
+
+            for (auto& object : objects_sleeping)
+                object->PostUpdateCL(true);
 
             stats.Update.End();
         }
